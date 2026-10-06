@@ -9,6 +9,7 @@ import { clean, log } from './utils.js';
 const COLUMNS = [
   'name',
   'area',
+  'city',
   'rating',
   'review_count',
   'cuisines',
@@ -34,7 +35,7 @@ export function openSupabase() {
 export async function loadExistingRestaurants(supabase) {
   const { data, error } = await supabase
     .from(TABLE)
-    .select('name, area, current_offer, swiggy_offer, zomato_url, swiggy_url');
+    .select('name, area, city, current_offer, swiggy_offer, zomato_url, swiggy_url');
   if (error) throw new Error(`Could not read ${TABLE}: ${error.message}`);
   return data ?? [];
 }
@@ -58,6 +59,7 @@ function ratingNumber(value) {
 export function buildPayload({
   name,
   area,
+  city,
   rating,
   reviewCount,
   cuisines,
@@ -76,6 +78,7 @@ export function buildPayload({
   const row = {
     name: clean(name),
     area: clean(area),
+    city: clean(city) || 'Hyderabad',
     offers_last_checked_at: checkedAt,
   };
 
@@ -106,7 +109,7 @@ export function buildPayload({
 
 export async function upsertRestaurant(supabase, payload) {
   const { error } = await supabase.from(TABLE).upsert(payload, {
-    onConflict: 'name,area',
+    onConflict: 'name,area,city',
     ignoreDuplicates: false,
   });
   if (error) {
@@ -114,5 +117,5 @@ export async function upsertRestaurant(supabase, payload) {
       `Upsert failed for "${payload.name}" / "${payload.area}": ${error.message}${error.hint ? ` (${error.hint})` : ''}`,
     );
   }
-  log.info(`Upserted "${payload.name}" (${payload.area}) into ${TABLE}.`);
+  log.info(`Upserted "${payload.name}" (${payload.area}, ${payload.city}) into ${TABLE}.`);
 }

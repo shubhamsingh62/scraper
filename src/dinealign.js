@@ -1,12 +1,13 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { areasOverlap, bestMatch } from './match.js';
+import { CARD_LIMIT, qualityFailure } from './curate.js';
 import { keepsExistingOffer } from './offerRead.js';
 import { ProxyPool } from './proxyPool.js';
 import { buildPayload, loadExistingRestaurants, openSupabase, upsertRestaurant } from './restaurantUpsert.js';
 import { scrapeOptionsFromEnv } from './scrapeOptions.js';
 import { fetchDineoutListing, fetchDineoutRestaurant } from './swiggyDineout.js';
-import { envInt, log } from './utils.js';
+import { clean, log } from './utils.js';
 import { fetchZomatoDiningListing, fetchZomatoDiningPage } from './zomatoDining.js';
 import { stripCity } from './zomato.js';
 
@@ -15,10 +16,11 @@ const USAGE = `DineAlign: Zomato dining offers + Swiggy Dineout bill discounts -
 Usage: npm run dinealign -- [options]
 
   --areas <file>    Area list (default config/areas.json)
-  --limit <n>       Process at most n restaurants (default: all)
-  --max-pages <n>   Zomato dine-out pages per area (default: MAX_PAGES or 3)
+  --limit <n>       Process at most n restaurants that pass the quality bar (default: all)
   --dry-run         Scrape and print payloads, do not write to Supabase
 
+Each area uses Zomato's popularity order and stops once ${CARD_LIMIT} cards are collected.
+A card is kept only when rating >= 4, reviews >= 500, and cost for two >= ₹800.
 Each request waits a random 10-15s unless MIN_DELAY_MS / MAX_DELAY_MS are set.
 A saved zomato_url or swiggy_url is opened directly. Search runs only when that URL is empty.
 A bot check keeps the offer already stored. null is written only when the page loaded and showed no dining discount.`;
@@ -27,7 +29,6 @@ const { values: args } = parseArgs({
   options: {
     areas: { type: 'string', default: 'config/areas.json' },
     limit: { type: 'string' },
-    'max-pages': { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
@@ -60,10 +61,11 @@ function fill(current, incoming) {
   return empty ? prefer(null, incoming) : current;
 }
 
-function blankVenue(name, area) {
+function blankVenue(name, area, city) {
   return {
     name,
     area,
+    city,
     cuisines: [],
     cost_for_two: null,
     rating: null,
@@ -85,7 +87,7 @@ function blankVenue(name, area) {
 
 function attachListing(venue, patch) {
   venue.cuisines = [...new Set([...(venue.cuisines ?? []), ...(patch.cuisines ?? [])].map((item) => item.trim()).filter(Boolean))];
-  venue.cost_for_two = prefer(venue.cost_for_two, patch.cost_for_two);
+  venue.cost_for_two = fill(venue.cost_for_two, patch.cost_for_two);
   venue.rating = fill(venue.rating, patch.rating);
   venue.review_count = fill(venue.review_count, patch.review_count);
   venue.bar_status = fill(venue.bar_status, patch.bar_status);
@@ -103,13 +105,17 @@ function attachListing(venue, patch) {
  * One row per outlet. A database row with a cached URL is refreshed from that URL.
  * A row without a URL is filled from the area listing, and the resolved URL is saved.
  */
-function mergeVenues(zomatoRows, swiggyRows, existingRows, area) {
+function sameCity(a, b) {
+  return clean(a).toLowerCase() === clean(b).toLowerCase();
+}
+
+function mergeVenues(zomatoRows, swiggyRows, existingRows, area, city) {
   /** @type {Map<string, ReturnType<typeof blankVenue>>} */
   const venues = new Map();
 
   const add = (name, venueArea) => {
-    const key = `${name}\u0000${venueArea}`;
-    if (!venues.has(key)) venues.set(key, blankVenue(name, venueArea));
+    const key = `${name}\u0000${venueArea}\u0000${city.toLowerCase()}`;
+    if (!venues.has(key)) venues.set(key, blankVenue(name, venueArea, city));
     return venues.get(key);
   };
 
@@ -123,17 +129,19 @@ function mergeVenues(zomatoRows, swiggyRows, existingRows, area) {
 
   for (const row of swiggyRows) {
     const hit = bestMatch({ name: row.name, area: row.area || area }, asCandidates());
-    const venue = hit ? hit.candidate.ref : add(row.name, area);
+    const venue = hit?.ref ?? add(row.name, area);
     attachListing(venue, { ...row, swiggyOffer: row.offer, zomatoOffer: null });
   }
 
   for (const row of existingRows) {
-    if (!areasOverlap(row.area, area)) continue;
+    if (!areasOverlap(row.area, area) || (row.city && !sameCity(row.city, city))) continue;
     const hit = bestMatch({ name: row.name, area: row.area }, asCandidates());
-    const venue = hit ? hit.candidate.ref : add(row.name, row.area);
+    if (!hit?.ref) continue;
+    const venue = hit.ref;
     venue.existing = row;
     venue.name = row.name;
     venue.area = row.area;
+    venue.city = row.city || city;
     if (row.zomato_url) {
       venue.refreshZomato = true;
       venue.zomato_url = row.zomato_url;
@@ -145,6 +153,19 @@ function mergeVenues(zomatoRows, swiggyRows, existingRows, area) {
   }
 
   return [...venues.values()];
+}
+
+function keepCurated(venues) {
+  const kept = [];
+  for (const venue of venues) {
+    const reason = qualityFailure(venue);
+    if (reason) {
+      log.info(`  skip "${venue.name}": ${reason}`);
+      continue;
+    }
+    kept.push(venue);
+  }
+  return kept;
 }
 
 function warnIfBlocked(name, label, offer, existing) {
@@ -209,8 +230,10 @@ async function main() {
   const pool = ProxyPool.fromEnv();
   const opts = scrapeOptionsFromEnv(pool);
   applyVisitDelay(opts);
-  opts.maxPages = positiveInt(args['max-pages'], '--max-pages', envInt('MAX_PAGES', 3));
+  opts.maxPages = 4;
+  opts.shouldStop = (collected) => collected.size >= CARD_LIMIT;
   log.info(`Waiting ${opts.pacer.minDelayMs}-${opts.pacer.maxDelayMs}ms before each request.`);
+  log.info(`Each area stops at ${CARD_LIMIT} cards, then keeps rating >= 4, reviews >= 500, cost for two >= ₹800.`);
 
   const checkedAt = new Date().toISOString();
   /** @type {ReturnType<typeof buildPayload>[]} */
@@ -220,15 +243,17 @@ async function main() {
   for (const target of targets) {
     if (processed >= limit) break;
     const area = target.area;
-    log.info(`Area ${area}: Zomato dine-out + Swiggy Dineout.`);
+    const city = target.cityName || 'Hyderabad';
+    log.info(`Area ${area}, ${city}: Zomato dine-out + Swiggy Dineout.`);
 
     let zomatoRows = [];
     let swiggyRows = [];
     try {
       zomatoRows = (await fetchZomatoDiningListing(pool, opts, target.city, target.locality))
         .filter((row) => areasOverlap(stripCity(row.area), area))
-        .map((row) => ({ ...row, area }));
-      log.info(`  Zomato dine-out: ${zomatoRows.length} in ${area}.`);
+        .slice(0, CARD_LIMIT)
+        .map((row) => ({ ...row, area, city }));
+      log.info(`  Zomato dine-out: ${zomatoRows.length} card(s) in ${area} (cap ${CARD_LIMIT}).`);
     } catch (err) {
       log.error(`  Zomato listing for ${area} failed: ${err.message}`);
     }
@@ -236,13 +261,14 @@ async function main() {
     try {
       const listing = await fetchDineoutListing(pool, opts, target.swiggyCity || target.city, target.swiggySlug || target.locality);
       if (listing.blocked) log.warn(`  [BOT DETECTED] Swiggy Dineout listing for ${area} was blocked. Cached offers stay as they are.`);
-      swiggyRows = listing.restaurants.filter((row) => areasOverlap(row.area, area));
-      log.info(`  Swiggy Dineout: ${swiggyRows.length} in ${area}.`);
+      swiggyRows = listing.restaurants.filter((row) => areasOverlap(row.area, area)).slice(0, CARD_LIMIT);
+      log.info(`  Swiggy Dineout: ${swiggyRows.length} card(s) in ${area} (cap ${CARD_LIMIT}).`);
     } catch (err) {
       log.error(`  Swiggy Dineout listing for ${area} failed: ${err.message}`);
     }
 
-    const venues = mergeVenues(zomatoRows, swiggyRows, existing, area);
+    const venues = keepCurated(mergeVenues(zomatoRows, swiggyRows, existing, area, city));
+    log.info(`  ${venues.length} restaurant(s) passed the quality bar in ${area}.`);
     const matchedBoth = venues.filter((venue) => venue.zomato_url && venue.swiggy_url);
     log.info(
       `  ${matchedBoth.length} outlet(s) matched on both platforms` +
@@ -256,6 +282,7 @@ async function main() {
         const payload = buildPayload({
           name: venue.name,
           area: venue.area,
+          city: venue.city || city,
           rating: venue.rating,
           reviewCount: venue.review_count,
           cuisines: venue.cuisines,
