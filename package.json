@@ -11,7 +11,8 @@
     "sync": "node --env-file-if-exists=.env src/index.js",
     "scrape": "node --env-file-if-exists=.env src/index.js --dry-run",
     "sync:sample": "node --env-file-if-exists=.env src/index.js --input data/sample-restaurants.json",
-    "place": "node --env-file-if-exists=.env src/place.js"
+    "place": "node --env-file-if-exists=.env src/place.js",
+    "dinealign": "node --env-file-if-exists=.env src/dinealign.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",

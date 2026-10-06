@@ -1,0 +1,20 @@
+[
+  {
+    "city": "hyderabad",
+    "locality": "banjara-hills",
+    "area": "Banjara Hills",
+    "swiggySlug": "banjara-hills"
+  },
+  {
+    "city": "hyderabad",
+    "locality": "jubilee-hills",
+    "area": "Jubilee Hills",
+    "swiggySlug": "jubilee-hills"
+  },
+  {
+    "city": "hyderabad",
+    "locality": "gachibowli",
+    "area": "Gachibowli",
+    "swiggySlug": "gachibowli"
+  }
+]

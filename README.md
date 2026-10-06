@@ -5,6 +5,7 @@ Scrapes restaurant names, images and live offers from Zomato listing pages throu
 ```
 src/
   index.js         CLI entry: scrape (or load JSON) → sync
+  dinealign.js     Hyderabad dining pipeline: Zomato Gold + Swiggy Dineout → upsert
   place.js         CLI: "place name" → every restaurant there as JSON (no DB)
   locations.js     place text → Zomato city/locality slugs
   zomato.js        listing crawler (page 1 HTML + infinite-scroll API pages) + restaurant page parser
@@ -16,6 +17,24 @@ data/sample-restaurants.json  Apify-shaped sample input
 supabase/migration.sql     columns + unique index needed for upsert
 .github/workflows/daily-sync.yml
 ```
+
+## DineAlign dining upsert
+
+`npm run dinealign` reads `config/hyderabad.json`, then for each area loads Zomato's dine-out list and Swiggy Dineout. Outlets are joined on name plus area and upserted into `restaurants` (or `SUPABASE_TABLE`). Each row uses only these columns: `name`, `area`, `rating`, `review_count`, `cuisines`, `cost_for_two`, `bar_status`, `vibe_tags`, `must_try`, `image_urls`, `open_until`, `swiggy_url`, `zomato_url`, `current_offer`, `swiggy_offer`, `offers_last_checked_at`. `id` and `created_at` are not sent. `current_offer` is the Zomato Gold dining discount. `swiggy_offer` is the Swiggy Dineout bill discount (and the pre-book deal when Swiggy shows one). `rating` is the Zomato dining score.
+
+```bash
+npm run dinealign -- --dry-run --limit 5
+npm run dinealign
+```
+
+`.github/workflows/dinealign-sync.yml` runs that command twice a day, at 10:00 and 19:00 IST, after the repo is on GitHub and the secrets below are set. Scheduled runs can start a few minutes late. You can also start it from the Actions tab with **Run workflow**.
+
+Run `supabase/migration.sql` first. The upsert uses the service role key and `onConflict: 'name, area'`.
+
+- A row that already has `zomato_url` or `swiggy_url` is opened at that URL. Search runs only when the URL is empty, and the resolved URL is saved for the next run.
+- A bot check, captcha, 403, or 429 logs `[BOT DETECTED] Retaining last known offer for <name>` and does not write `null` over the stored offer.
+- `null` is written only when the page loaded and showed no dining discount.
+- One venue failing does not stop the batch. Requests wait a random 10–15 seconds unless `MIN_DELAY_MS` and `MAX_DELAY_MS` are set.
 
 ## 1. Database setup
 

@@ -53,11 +53,66 @@ export async function withRotation(pool, opts, what, fn) {
   throw new GaveUpError(`${what}: gave up after ${opts.maxAttempts} attempts (${lastError?.message})`);
 }
 
+function numericRating(value) {
+  const rating = Number.parseFloat(value);
+  return Number.isFinite(rating) ? rating : null;
+}
+
+/** Dining score and review count. Delivery ratings are ignored. */
+export function diningRating(info) {
+  const dining = info?.ratingNew?.ratings?.DINING ?? info?.rating_new?.ratings?.DINING;
+  return {
+    rating: numericRating(dining?.rating || info?.rating?.aggregate_rating),
+    review_count: clean(dining?.reviewCount || info?.rating?.votes) || null,
+  };
+}
+
+const VIBE_HIGHLIGHTS = new Set([
+  'romantic dining',
+  'rooftop',
+  'outdoor seating',
+  'lounge seating',
+  'work friendly',
+  'family friendly',
+  'kid friendly',
+  'city view',
+  'garden',
+  'private dining area',
+  'less noisy',
+  'live music',
+  'live sports screening',
+  'poolside',
+  'fine dining',
+  'nightlife',
+  'dance floor',
+]);
+
+export function barStatus(highlights) {
+  const texts = (highlights ?? []).map((item) => clean(typeof item === 'string' ? item : item?.text)).filter(Boolean);
+  if (texts.some((text) => /full bar/i.test(text))) return 'Full bar';
+  if (texts.some((text) => /no alcohol|doesn.?t serve alcohol|alcohol not/i.test(text))) return 'No alcohol';
+  if (texts.some((text) => /cocktail|beer|wine|byob|serves alcohol|\bbar\b/i.test(text))) return 'Serves alcohol';
+  return null;
+}
+
+export function vibeTags(highlights) {
+  const tags = [];
+  const seen = new Set();
+  for (const item of highlights ?? []) {
+    const text = clean(typeof item === 'string' ? item : item?.text);
+    if (!text || !VIBE_HIGHLIGHTS.has(text.toLowerCase()) || seen.has(text.toLowerCase())) continue;
+    seen.add(text.toLowerCase());
+    tags.push(text);
+  }
+  return tags;
+}
+
 function toRawRestaurant(item) {
   const info = item.info;
   const deliveryOffers = (item.bulkOffers ?? [])
     .map((o) => clean([o.text, o.subtext].filter(Boolean).join(' ')))
     .filter(Boolean);
+  const rating = diningRating(info);
   return {
     res_id: info.resId,
     restaurant_name: clean(info.name),
@@ -68,6 +123,8 @@ function toRawRestaurant(item) {
     delivery_offer: deliveryOffers.join(' | ') || null,
     gold_offer: clean(item.gold?.offerValue) || null,
     zomato_url: item.cardAction?.clickUrl ? new URL(item.cardAction.clickUrl, BASE).toString() : null,
+    rating: rating.rating,
+    review_count: rating.review_count,
   };
 }
 
@@ -194,6 +251,8 @@ export function parseRestaurantPage(state) {
   const images = state.entities?.IMAGES ?? {};
   const imageIds = sections.SECTION_IMAGE_CAROUSEL?.entities?.flatMap((e) => e.entity_ids ?? []) ?? [];
   const popularDishes = clean(details.TOP_DISHES?.description).split(',').map(clean).filter(Boolean);
+  const highlights = details.HIGHLIGHTS?.highlights ?? [];
+  const rating = diningRating(basic);
 
   return {
     popular_dish: popularDishes[0] || null,
@@ -203,6 +262,10 @@ export function parseRestaurantPage(state) {
     cost_for_two: clean(details.CFT_DETAILS?.cost_text_min_info).replace(/\s*for (two|2).*$/i, '') || null,
     image_urls: imageIds.map((id) => images[id]?.url).filter(Boolean),
     thumb_url: basic.res_thumb || null,
+    rating: rating.rating,
+    review_count: rating.review_count,
+    bar_status: barStatus(highlights),
+    vibe_tags: vibeTags(highlights),
   };
 }
 
