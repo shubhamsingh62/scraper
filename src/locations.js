@@ -37,15 +37,20 @@ export function localityCandidates(name) {
   return out;
 }
 
-async function lookupCity(pool, opts, place) {
+async function lookupLocation(pool, opts, query) {
   const json = await withRotation(pool, opts, 'location search', (session) =>
-    session.requestJson(`${BASE}/webroutes/location/search?q=${encodeURIComponent(place)}`),
+    session.requestJson(`${BASE}/webroutes/location/search?q=${encodeURIComponent(query)}`),
   );
   const top = json?.locationSuggestions?.[0];
-  const city = clean((top?.display_subtitle ?? top?.entity_subtitle ?? '').split(',')[0]);
-  if (!city) throw new Error(`Couldn't work out which city "${place}" is in. Pass it as "${place}, <city>" or use --city.`);
-  log.info(`Zomato location search: "${place}" -> ${clean(top.display_title)}, ${city}`);
-  return city;
+  if (!top) return null;
+  const city = clean((top.display_subtitle ?? top.entity_subtitle ?? '').split(',')[0]);
+  const lat = Number(top.entity_latitude);
+  const lng = Number(top.entity_longitude);
+  log.info(
+    `Zomato location search: "${query}" -> ${clean(top.display_title)}, ${city}` +
+      `${Number.isFinite(lat) ? ` (${lat}, ${lng})` : ''}`,
+  );
+  return { city, lat, lng };
 }
 
 /**
@@ -57,7 +62,11 @@ export async function resolvePlace(pool, opts, input, cityOverride) {
   const [placePart, ...rest] = input.split(',').map(clean).filter(Boolean);
   if (!placePart) throw new Error('Place is empty.');
 
-  const cityName = cityOverride || rest[0] || (await lookupCity(pool, opts, placePart));
+  const located = await lookupLocation(pool, opts, [placePart, cityOverride || rest[0]].filter(Boolean).join(', '));
+  const cityName = cityOverride || rest[0] || located?.city;
+  if (!cityName) {
+    throw new Error(`Couldn't work out which city "${placePart}" is in. Pass it as "${placePart}, <city>" or use --city.`);
+  }
   const city = citySlug(cityName);
 
   for (const locality of localityCandidates(placePart)) {
@@ -65,7 +74,7 @@ export async function resolvePlace(pool, opts, input, cityOverride) {
     try {
       await listingExists(pool, url, opts);
       log.info(`Resolved "${input}" -> ${url}`);
-      return { place: placePart, city, locality };
+      return { place: placePart, city, locality, lat: located?.lat, lng: located?.lng };
     } catch (err) {
       if (!(err instanceof HttpError && err.status === 404)) throw err;
       log.info(`  ${url} doesn't exist, trying a shorter name`);

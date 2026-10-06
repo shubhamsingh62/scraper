@@ -3,8 +3,9 @@ import { dirname } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { resolvePlace, slugify } from './locations.js';
+import { attachSwiggyOffers } from './swiggy.js';
 import { PoolExhaustedError, ProxyPool } from './proxyPool.js';
-import { scrapeOptionsFromEnv } from './scrapeOptions.js';
+import { applyFetchDelay, scrapeOptionsFromEnv } from './scrapeOptions.js';
 import { log } from './utils.js';
 import {
   BASE,
@@ -30,12 +31,15 @@ Usage: npm run place -- "<place>[, <city>]" [options]
   --no-details        Skip each restaurant's own page: much faster, but no must_try,
                       open_until or extra images
   --max-images <n>    Images per restaurant (default: 5)
+  --delay <seconds>   Wait at least this long before every fetch, so fewer IPs get blocked
+  --no-swiggy         Skip the Swiggy match (Zomato offer only)
   --output <file>     Default: output/<place>-<city>.json
 
 Examples:
   npm run place -- "Koramangala, Bangalore"
   npm run place -- "Bandra West" --city mumbai --limit 30
-  npm run place -- "Connaught Place, Delhi" --no-details`;
+  npm run place -- "Connaught Place, Delhi" --no-details
+  npm run place -- "Koramangala, Bangalore" --delay 10`;
 
 const { values: args, positionals } = parseArgs({
   allowPositionals: true,
@@ -48,6 +52,8 @@ const { values: args, positionals } = parseArgs({
     nearby: { type: 'boolean', default: false },
     details: { type: 'boolean', default: true },
     'max-images': { type: 'string', default: '5' },
+    delay: { type: 'string' },
+    swiggy: { type: 'boolean', default: true },
     output: { type: 'string' },
     help: { type: 'boolean', short: 'h', default: false },
   },
@@ -98,6 +104,7 @@ function toOutput(r, place, maxImages) {
     must_try: d.must_try ?? null,
     open_until: d.open_until ?? null,
     current_offer: offerText(r),
+    swiggy_offer: r.swiggy_offer ?? null,
     image_urls: uniqueImages([r.image_url, ...(d.image_urls ?? []), d.thumb_url], maxImages),
   };
 }
@@ -133,8 +140,13 @@ async function main() {
 
   const pool = ProxyPool.fromEnv();
   const opts = { ...scrapeOptionsFromEnv(pool), maxPages: positiveInt(args['max-pages'], '--max-pages') };
+  if (args.delay != null) {
+    const seconds = positiveInt(args.delay, '--delay');
+    applyFetchDelay(opts.pacer, seconds);
+    log.info(`Waiting at least ${seconds}s before every fetch, so the same IP is less likely to get blocked.`);
+  }
 
-  const { place, city, locality } = await resolvePlace(pool, opts, input, args.city);
+  const { place, city, locality, lat, lng } = await resolvePlace(pool, opts, input, args.city);
   const output = args.output ?? `output/${locality}-${city}.json`;
   const keep = (r) => args.nearby || inLocality(r.locality, locality);
 
@@ -151,6 +163,9 @@ async function main() {
 
   const restaurants = [...merged.values()].filter(keep).slice(0, limit);
   log.info(`${merged.size} restaurant(s) found, ${restaurants.length} located in ${place}${args.nearby ? ' or nearby' : ''}.`);
+  if (args.swiggy && restaurants.length > 0) {
+    await attachSwiggyOffers(restaurants, pool, opts, { lat, lng });
+  }
   const result = () => restaurants.map((r) => toOutput(r, place, maxImages));
 
   if (args.details && restaurants.length > 0) {
@@ -180,7 +195,9 @@ async function main() {
   console.table(pool.stats());
   log.info(
     `Saved ${data.length} restaurant(s) to ${output} ` +
-      `(${data.filter((r) => r.current_offer).length} with an offer, ${data.filter((r) => r.must_try).length} with must_try).`,
+      `(${data.filter((r) => r.current_offer).length} with a Zomato offer, ` +
+      `${data.filter((r) => r.swiggy_offer).length} with a Swiggy offer, ` +
+      `${data.filter((r) => r.must_try).length} with must_try).`,
   );
 }
 

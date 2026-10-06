@@ -38,7 +38,7 @@ export class Pacer {
 
     const sinceLastOnProxy = Date.now() - (proxy.lastRequestAt ?? 0);
     const waitMs = Math.max(randomBetween(this.minDelayMs, this.maxDelayMs), this.perProxyGapMs - sinceLastOnProxy);
-    await sleep(waitMs);
+    await pause(waitMs, `before fetch via ${proxy.label}`);
 
     this.requests++;
     proxy.lastRequestAt = Date.now();

@@ -60,6 +60,7 @@ All values are in milliseconds and can be set in `.env` or as GitHub Actions **V
 
 | Variable | Default | What it does |
 | --- | --- | --- |
+| `FETCH_DELAY_SEC` | 0 | Wait at least this many **seconds** before every fetch (plus up to 3s of jitter). `0` leaves the ranges below in charge. Set `8` or `10` if IPs start getting blocked. |
 | `MIN_DELAY_MS` / `MAX_DELAY_MS` | 2500 / 6000 | Random wait before **every** request |
 | `PROXY_MIN_GAP_MS` | 8000 | The same IP is never reused sooner than this. With one proxy this is effectively the minimum delay; with many proxies, rotation hides it. |
 | `BREAK_EVERY` | 25 | Take a long break after every N requests (`0` disables) |
@@ -122,6 +123,7 @@ Output (`output/<place>-<city>.json`):
     "must_try": "Harissa Chicken Sando",
     "open_until": "12:00 AM",
     "current_offer": "50% OFF",
+    "swiggy_offer": "Free delivery",
     "image_urls": ["https://b.zmtcdn.com/data/pictures/..._o2_featured_v2.jpg", "..."]
   }
 ]
@@ -133,7 +135,8 @@ Where each field comes from:
 | --- | --- |
 | `name`, `cuisines`, `cost_for_two` | Listing cards |
 | `area` | The restaurant's Zomato locality without the city, e.g. `Koramangala 5th Block` |
-| `current_offer` | The delivery offer, or the Zomato Gold dining offer if there's no delivery offer |
+| `current_offer` | The Zomato delivery offer, or the Zomato Gold dining offer if there's no delivery offer |
+| `swiggy_offer` | The offer on the matching Swiggy outlet. `null` when Swiggy has no offer, or when no outlet matched |
 | `must_try` | The first of the restaurant's "Popular Dishes". If it has none, the most-voted dish rated 4+ on its delivery menu. Otherwise its "Known for" text. |
 | `open_until` | Today's closing time from the restaurant page (`Open 24 hours` / `Closed today` when applicable) |
 | `image_urls` | The featured image plus photos from the restaurant page carousel (`--max-images`, default 5) |
@@ -143,7 +146,8 @@ How it works:
 - **Finding the place:** the place is turned into Zomato's URL slug by trying progressively shorter names until a listing exists. For example, `HSR Layout` tries `hsr-layout`, then `hsr`. City aliases are built in (Bengaluru is `bangalore`; Delhi, Gurugram and Noida are `ncr`, etc.). If a place isn't found, copy the slug from its Zomato URL.
 - **Collecting restaurants:** both the delivery and dine-out listings are crawled to the end, or until `--limit`. By default only restaurants located in the place are kept. `--nearby` also keeps ones that only deliver there.
 - **Detail pages:** "Fetch all" means one or two extra page loads per restaurant for `must_try`, `open_until` and images, so a big area takes a long time. Koramangala lists 2,000+ restaurants, which is hours at the default delays from a single IP. The script prints an estimate before it starts and saves progress every 25 restaurants. Use `--limit` to test, `--no-details` for a fast listing-only run, and more proxies to go faster.
-- **Rotation and delays:** it uses the same proxy pool and delay settings as the daily sync (`PROXY_LIST`, `MIN_DELAY_MS`, …). `MAX_PAGES` is ignored here; use `--max-pages` instead.
+- **Rotation and delays:** it uses the same proxy pool and delay settings as the daily sync (`PROXY_LIST`, `MIN_DELAY_MS`, …). `MAX_PAGES` is ignored here; use `--max-pages` instead. `--delay 10` waits at least 10 seconds before every fetch, including the first one, which is the easiest way to keep a single IP from getting blocked.
+- **Swiggy on the same object:** Zomato and Swiggy don't share restaurant IDs, and the same chain has many outlets. A Swiggy row is attached only when the names match (equal, or one contains the other) **and** the areas overlap, so "HSR" matches "HSR Layout" but "KFC" in HSR is not "KFC" in Koramangala. `--no-swiggy` skips this. Swiggy's menu endpoint (where the offer text lives) often answers with a bot check from a datacenter or bare IP; search still matches the outlet, and `swiggy_offer` stays `null` until a proxy gets past that check.
 
 ## 7. GitHub Actions
 

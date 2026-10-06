@@ -33,6 +33,7 @@ jobs:
           ALLOW_DIRECT: ${{ vars.ALLOW_DIRECT || 'false' }}
           SYNC_MODE: ${{ vars.SYNC_MODE || 'upsert' }}
           MAX_PAGES: ${{ vars.MAX_PAGES || '5' }}
+          FETCH_DELAY_SEC: ${{ vars.FETCH_DELAY_SEC || '0' }}
           MIN_DELAY_MS: ${{ vars.MIN_DELAY_MS || '2500' }}
           MAX_DELAY_MS: ${{ vars.MAX_DELAY_MS || '6000' }}
           PROXY_MIN_GAP_MS: ${{ vars.PROXY_MIN_GAP_MS || '8000' }}
