@@ -1,0 +1,14 @@
+[
+  {
+    "city": "bangalore",
+    "locality": "koramangala",
+    "area": "Koramangala",
+    "listings": ["delivery", "dineout"]
+  },
+  {
+    "city": "bangalore",
+    "locality": "indiranagar",
+    "area": "Indiranagar",
+    "listings": ["delivery"]
+  }
+]

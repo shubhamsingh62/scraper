@@ -1,0 +1,20 @@
+[
+  {
+    "restaurant_name": "Nagarjuna - Since 1984",
+    "area": "Koramangala",
+    "image_url": "https://b.zmtcdn.com/data/pictures/example/nagarjuna_featured_v2.jpg",
+    "zomato_offer_text": "50% off up to ₹100"
+  },
+  {
+    "restaurant_name": "Shahi Darbar",
+    "area": "Koramangala",
+    "image_url": "https://b.zmtcdn.com/data/pictures/example/shahi_darbar_featured_v2.jpg",
+    "zomato_offer_text": "Flat ₹125 OFF above ₹249"
+  },
+  {
+    "restaurant_name": "Toit",
+    "area": "Indiranagar",
+    "image_url": "https://b.zmtcdn.com/data/pictures/example/toit_featured_v2.jpg",
+    "zomato_offer_text": null
+  }
+]
