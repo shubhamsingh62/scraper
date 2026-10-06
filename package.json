@@ -1,0 +1,20 @@
+{
+  "name": "restalign-offers-scraper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Scrapes Zomato offers/images through a rotating proxy pool and syncs them into the Supabase restaurants table.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "sync": "node --env-file-if-exists=.env src/index.js",
+    "scrape": "node --env-file-if-exists=.env src/index.js --dry-run",
+    "sync:sample": "node --env-file-if-exists=.env src/index.js --input data/sample-restaurants.json",
+    "place": "node --env-file-if-exists=.env src/place.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
+    "undici": "^7.30.0"
+  }
+}

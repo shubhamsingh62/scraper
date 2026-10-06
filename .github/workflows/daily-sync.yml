@@ -1,0 +1,52 @@
+name: Daily Zomato offers sync
+
+on:
+  schedule:
+    # GitHub cron runs in UTC: 04:30 UTC = 10:00 AM IST. Use '0 10 * * *' for 10:00 AM UTC.
+    - cron: '30 4 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: zomato-offers-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Scrape Zomato and sync to Supabase
+        run: npm run sync
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PROXY_LIST: ${{ secrets.PROXY_LIST }}
+          ALLOW_DIRECT: ${{ vars.ALLOW_DIRECT || 'false' }}
+          SYNC_MODE: ${{ vars.SYNC_MODE || 'upsert' }}
+          MAX_PAGES: ${{ vars.MAX_PAGES || '5' }}
+          MIN_DELAY_MS: ${{ vars.MIN_DELAY_MS || '2500' }}
+          MAX_DELAY_MS: ${{ vars.MAX_DELAY_MS || '6000' }}
+          PROXY_MIN_GAP_MS: ${{ vars.PROXY_MIN_GAP_MS || '8000' }}
+          BREAK_EVERY: ${{ vars.BREAK_EVERY || '25' }}
+          LISTING_DELAY_MIN_MS: ${{ vars.LISTING_DELAY_MIN_MS || '10000' }}
+          LISTING_DELAY_MAX_MS: ${{ vars.LISTING_DELAY_MAX_MS || '25000' }}
+          # Start somewhere in 10:00-10:05 IST instead of the exact same second every day.
+          START_JITTER_MAX_MS: ${{ vars.START_JITTER_MAX_MS || '300000' }}
+
+      - name: Upload scraped JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraped-restaurants
+          path: output/
+          if-no-files-found: ignore
+          retention-days: 7
