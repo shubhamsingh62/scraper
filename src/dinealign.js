@@ -14,7 +14,7 @@ const USAGE = `DineAlign: Zomato dining offers + Swiggy Dineout bill discounts -
 
 Usage: npm run dinealign -- [options]
 
-  --areas <file>    Area list (default config/hyderabad.json)
+  --areas <file>    Area list (default config/areas.json)
   --limit <n>       Process at most n restaurants (default: all)
   --max-pages <n>   Zomato dine-out pages per area (default: MAX_PAGES or 3)
   --dry-run         Scrape and print payloads, do not write to Supabase
@@ -25,7 +25,7 @@ A bot check keeps the offer already stored. null is written only when the page l
 
 const { values: args } = parseArgs({
   options: {
-    areas: { type: 'string', default: 'config/hyderabad.json' },
+    areas: { type: 'string', default: 'config/areas.json' },
     limit: { type: 'string' },
     'max-pages': { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
